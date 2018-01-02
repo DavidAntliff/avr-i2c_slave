@@ -111,9 +111,6 @@
 
 #define I2C_ADDRESS 0x44
 
-#define DEBUG_LED_PORT PORTB
-#define DEBUG_LED_PIN  PB1
-
 #define REGISTER_CONTROL 0x00
 #define REGISTER_STATUS  0x01
 #define NUM_REGISTERS    2
@@ -151,10 +148,25 @@ static uint8_t registers[NUM_REGISTERS] = { 0x00, 0x00 };
 static uint8_t ssr1 = 0;
 static uint8_t ssr2 = 0;
 
-#define SSR1_PORT PORTB
-#define SSR1_PIN  PB0
-#define SSR2_PORT PORTB
-#define SSR2_PIN  PB2
+
+// I/O
+typedef struct
+{
+    volatile uint8_t * port;
+    uint8_t pin;
+} io_t;
+
+const io_t sw1_io = { &PORTA, PA0 };
+const io_t sw2_io = { &PORTA, PA1 };
+const io_t sw3_io = { &PORTA, PA2 };
+const io_t sw4_io = { &PORTA, PA3 };
+
+const io_t ssr1_io = { &PORTB, PB0 };
+const io_t ssr2_io = { &PORTB, PB2 };
+const io_t buzzer_io = { &PORTA, PA7 };
+
+const io_t debug_led_io = { &PORTB, PB1 };
+
 
 static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buffer,
                           uint8_t *output_buffer_length, uint8_t *output_buffer);
@@ -162,13 +174,13 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
 static void idle_callback(void);
 
 
-static void blink_led(volatile uint8_t * port, uint8_t pin, int n)
+static void blink_led(const io_t * io, int n)
 {
     for (int i = 0; i < n; ++i)
     {
-        *port |= 1 << pin;
+        *(io->port) |= 1 << io->pin;
         _delay_ms(100);
-        *port &= ~(1 << pin);
+        *(io->port) &= ~(1 << io->pin);
         _delay_ms(100);
     }
 }
@@ -183,7 +195,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
     switch (input_buffer_length)
     {
         case 0:  // read currently addressed register
-            //blink_led(&LED_BANK, LED_PORT, 1);
+            //blink_led(&debug_led_io, 1);
             if (register_addr < NUM_REGISTERS)
             {
                 *output_buffer_length = 1;
@@ -192,7 +204,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
             break;
 
         case 1:  // write before read - set ADDR register only
-            //blink_led(&LED_BANK, LED_PORT, 2);
+            //blink_led(&debug_led_io, 2);
             register_addr = input_buffer[0];
             if (register_addr < NUM_REGISTERS)
             {
@@ -202,7 +214,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
             break;
 
         case 2:  // write - set command register and addressed register
-            //blink_led(&LED_BANK, LED_PORT, 3);
+            //blink_led(&debug_led_io, 3);
             register_addr = input_buffer[0];
             if (register_addr < NUM_REGISTERS)
             {
@@ -219,7 +231,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
 
         default:
             // ignore
-            //blink_led(&LED_BANK, LED_PORT, 4);
+            blink_led(&debug_led_io, 4);
             break;
     }
 }
@@ -250,17 +262,17 @@ static void calculate_ssr_state(uint8_t * ssr, uint8_t mode, uint8_t control, ui
     }
 }
 
-static void update_ssr_output(uint8_t * ssr, volatile uint8_t * port, uint8_t pin)
+static void update_ssr_output(uint8_t * ssr, const io_t * io)
 {
     if (*ssr)
     {
         // drive low to turn SSR on
-        *port &= ~(1 << pin);
+        *(io->port) &= ~(1 << io->pin);
     }
     else
     {
         // drive high to turn SSR off
-        *port |= 1 << pin;
+        *(io->port) |= 1 << io->pin;
     }
 }
 
@@ -278,7 +290,7 @@ static void update_status_register(uint8_t * ssr, uint8_t status)
 
 static void idle_callback(void)
 {
-    //blink_led(&LED_BANK, LED_PORT, 1);
+    //blink_led(&debug_led_io, 1);
 
     // TODO: debounce switches
     read_switches();
@@ -286,26 +298,67 @@ static void idle_callback(void)
     calculate_ssr_state(&ssr1, REGISTER_STATUS_CP_MODE, REGISTER_CONTROL_SSR1, REGISTER_STATUS_CP_MAN);
     calculate_ssr_state(&ssr2, REGISTER_STATUS_PP_MODE, REGISTER_CONTROL_SSR2, REGISTER_STATUS_PP_MAN);
 
-    update_ssr_output(&ssr1, &SSR1_PORT, SSR1_PIN);
-    update_ssr_output(&ssr2, &SSR2_PORT, SSR2_PIN);
+    update_ssr_output(&ssr1, &ssr1_io);
+    update_ssr_output(&ssr2, &ssr2_io);
 
     update_status_register(&ssr1, REGISTER_STATUS_SSR1);
     update_status_register(&ssr2, REGISTER_STATUS_SSR2);
 }
 
+static volatile uint8_t * get_ddr(volatile uint8_t * port)
+{
+    volatile uint8_t * ddr = 0;
+    if (port == &PORTA)
+    {
+         ddr = &DDRA;
+    }
+    else if (port == &PORTB)
+    {
+        ddr = &DDRB;
+    }
+    return ddr;
+}
+
+static void init_as_input(const io_t * io, bool enable_pullup)
+{
+    volatile uint8_t * ddr = get_ddr(io->port);
+    *ddr &= ~(1 << io->pin);
+    if (enable_pullup)
+    {
+        *(io->port) |= (1 << io->pin);
+    }
+    else
+    {
+        *(io->port) &= ~(1 << io->pin);
+    }
+}
+
+static void init_as_output(const io_t * io, bool default_value)
+{
+    volatile uint8_t * ddr = get_ddr(io->port);
+    *ddr |= (1 << io->pin);
+    if (default_value)
+    {
+        *(io->port) |= (1 << io->pin);
+    }
+    else
+    {
+        *(io->port) &= ~(1 << io->pin);
+    }
+}
+
 int main(void)
 {
-    // initialize PA0-3 as inputs, PA7 as output
-    DDRA = (0 << PA0) | (0 << PA1) | (0 << PA2) | (0 << PA3) | (1 << PA7);
+    // initialize switches as inputs with pull-ups
+    init_as_input(&sw1_io, true);
+    init_as_input(&sw2_io, true);
+    init_as_input(&sw3_io, true);
+    init_as_input(&sw4_io, true);
 
-    // activate pullups on PA0-3
-    PORTA = (1 << PA0) | (1 << PA1) | (1 << PA2) | (1 << PA3);
-
-    // initialize PB0, PB1, PB2 as outputs
-    DDRB = (1 << PB0) | (1 << PB1) | (1 << PB2);
-
-    // initialise PB0 and PB2 high
-    PORTB = (1 << PB0) | (0 << PB1) | (1 << PB2);
+    // init SSR and buzzer as outputs with default values
+    init_as_output(&ssr1_io, 1);
+    init_as_output(&ssr2_io, 1);
+    init_as_output(&buzzer_io, 0);
 
     // start the slave loop
     usi_twi_slave(I2C_ADDRESS, false /*use_sleep*/, data_callback, idle_callback);
