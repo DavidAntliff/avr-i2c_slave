@@ -276,6 +276,18 @@ static void update_ssr_output(uint8_t * ssr, const io_t * io)
     }
 }
 
+static void update_buzzer_output(const io_t * io)
+{
+    if (registers[REGISTER_CONTROL] & REGISTER_CONTROL_BUZZER)
+    {
+        *(io->port) |= (1 << io->pin);
+    }
+    else
+    {
+        *(io->port) &= ~(1 << io->pin);
+    }
+}
+
 static void update_status_register(uint8_t * ssr, uint8_t status)
 {
     if (*ssr)
@@ -300,6 +312,7 @@ static void idle_callback(void)
 
     update_ssr_output(&ssr1, &ssr1_io);
     update_ssr_output(&ssr2, &ssr2_io);
+    update_buzzer_output(&buzzer_io);
 
     update_status_register(&ssr1, REGISTER_STATUS_SSR1);
     update_status_register(&ssr2, REGISTER_STATUS_SSR2);
