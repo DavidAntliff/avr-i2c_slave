@@ -302,7 +302,12 @@ static void update_status_register(uint8_t * ssr, uint8_t status)
 
 static void idle_callback(void)
 {
-    //blink_led(&debug_led_io, 1);
+    static uint32_t count = 0;
+    if (++count >= 2000)
+    {
+        *(debug_led_io.port) ^= (1 << debug_led_io.pin);
+        count = 0;
+    }
 
     // TODO: debounce switches
     read_switches();
@@ -372,6 +377,7 @@ int main(void)
     init_as_output(&ssr1_io, 1);
     init_as_output(&ssr2_io, 1);
     init_as_output(&buzzer_io, 0);
+    init_as_output(&debug_led_io, 1);
 
     // start the slave loop
     usi_twi_slave(I2C_ADDRESS, false /*use_sleep*/, data_callback, idle_callback);
