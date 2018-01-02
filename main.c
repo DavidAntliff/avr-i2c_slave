@@ -111,8 +111,8 @@
 
 #define I2C_ADDRESS 0x44
 
-#define LED_BANK  PORTB
-#define LED_PORT  PB1
+#define DEBUG_LED_PORT PORTB
+#define DEBUG_LED_PIN  PB1
 
 #define REGISTER_CONTROL 0x00
 #define REGISTER_STATUS  0x01
@@ -151,10 +151,10 @@ static uint8_t registers[NUM_REGISTERS] = { 0x00, 0x00 };
 static uint8_t ssr1 = 0;
 static uint8_t ssr2 = 0;
 
-#define SSR1_BANK PORTB
-#define SSR1_PORT PB0
-#define SSR2_BANK PORTB
-#define SSR2_PORT PB2
+#define SSR1_PORT PORTB
+#define SSR1_PIN  PB0
+#define SSR2_PORT PORTB
+#define SSR2_PIN  PB2
 
 static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buffer,
                           uint8_t *output_buffer_length, uint8_t *output_buffer);
@@ -226,28 +226,6 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
 
 static void read_switches(void)
 {
-
-}
-
-static void calculate_ssr_state(uint8_t * ssr, uint8_t mode)
-{
-
-}
-
-static void update_ssr_output(uint8_t * ssr, volatile uint8_t * port, uint8_t pin)
-{
-
-}
-
-static void update_status_register(uint8_t * ssr, uint8_t status)
-{
-
-}
-
-static void idle_callback(void)
-{
-    //blink_led(&LED_BANK, LED_PORT, 1);
-
     // read switch states from first 4 bits of PINA
     uint8_t switches = PINA & 0x0f;
     registers[REGISTER_STATUS] = switches << 4;
@@ -255,56 +233,64 @@ static void idle_callback(void)
     // manual switches are inverted
     registers[REGISTER_STATUS] ^= REGISTER_STATUS_CP_MAN;
     registers[REGISTER_STATUS] ^= REGISTER_STATUS_PP_MAN;
+}
 
+static void calculate_ssr_state(uint8_t * ssr, uint8_t mode, uint8_t control, uint8_t man)
+{
     // Calculate SSR actual states
-    if ((registers[REGISTER_STATUS] & REGISTER_STATUS_CP_MODE) == REGISTER_STATUS_MODE_AUTO)
+    if ((registers[REGISTER_STATUS] & mode) == REGISTER_STATUS_MODE_AUTO)
     {
         // use the requested control value
-        ssr1 = (registers[REGISTER_CONTROL] & REGISTER_CONTROL_SSR1) ? 1 : 0;
+        *ssr = (registers[REGISTER_CONTROL] & control) ? 1 : 0;
     }
     else
     {
         // use the manual switch value
-        ssr1 = (registers[REGISTER_STATUS] & REGISTER_STATUS_CP_MAN) ? 1 : 0;
+        *ssr = (registers[REGISTER_STATUS] & man) ? 1 : 0;
     }
+}
 
-    if ((registers[REGISTER_STATUS] & REGISTER_STATUS_PP_MODE) == REGISTER_STATUS_MODE_AUTO)
+static void update_ssr_output(uint8_t * ssr, volatile uint8_t * port, uint8_t pin)
+{
+    if (*ssr)
     {
-        // use the requested control value
-        ssr2 = (registers[REGISTER_CONTROL] & REGISTER_CONTROL_SSR2) ? 1 : 0;
-    }
-    else
-    {
-        // use the manual switch value
-        ssr2 = (registers[REGISTER_STATUS] & REGISTER_STATUS_PP_MAN) ? 1 : 0;
-    }
-
-    // Update the actual status of the SSR and drive the output
-    if (ssr1)
-    {
-        registers[REGISTER_STATUS] |= REGISTER_STATUS_SSR1;
-
         // drive low to turn SSR on
-        SSR1_BANK &= ~(1 << SSR1_PORT);
+        *port &= ~(1 << pin);
     }
     else
     {
-        registers[REGISTER_STATUS] &= ~REGISTER_STATUS_SSR1;
-        SSR1_BANK |= 1 << SSR1_PORT;
+        // drive high to turn SSR off
+        *port |= 1 << pin;
     }
+}
 
-    if (ssr2)
+static void update_status_register(uint8_t * ssr, uint8_t status)
+{
+    if (*ssr)
     {
-        registers[REGISTER_STATUS] |= REGISTER_STATUS_SSR2;
-
-        // drive low to turn SSR on
-        SSR2_BANK &= ~(1 << SSR2_PORT);
+        registers[REGISTER_STATUS] |= status;
     }
     else
     {
-        registers[REGISTER_STATUS] &= ~REGISTER_STATUS_SSR2;
-        SSR2_BANK |= 1 << SSR2_PORT;
+        registers[REGISTER_STATUS] &= ~status;
     }
+}
+
+static void idle_callback(void)
+{
+    //blink_led(&LED_BANK, LED_PORT, 1);
+
+    // TODO: debounce switches
+    read_switches();
+
+    calculate_ssr_state(&ssr1, REGISTER_STATUS_CP_MODE, REGISTER_CONTROL_SSR1, REGISTER_STATUS_CP_MAN);
+    calculate_ssr_state(&ssr2, REGISTER_STATUS_PP_MODE, REGISTER_CONTROL_SSR2, REGISTER_STATUS_PP_MAN);
+
+    update_ssr_output(&ssr1, &SSR1_PORT, SSR1_PIN);
+    update_ssr_output(&ssr2, &SSR2_PORT, SSR2_PIN);
+
+    update_status_register(&ssr1, REGISTER_STATUS_SSR1);
+    update_status_register(&ssr2, REGISTER_STATUS_SSR2);
 }
 
 int main(void)
