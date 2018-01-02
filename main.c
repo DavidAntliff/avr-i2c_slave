@@ -75,10 +75,10 @@
  *     bit 0: set SSR1 state in AUTO mode (1 = on, 0 = off)
  *
  *   STATUS register (0x01): provides I2C master monitoring of switch and SSR states
- *     bit 7: read sw3 (PP Man) state (1 = on, 0 = off)
- *     bit 6: read sw2 (PP Mode) state (1 = on, 0 = off)
- *     bit 5: read sw1 (CP Man) state (1 = on, 0 = off)
- *     bit 4: read sw0 (CP Mode) state (1 = on, 0 = off)
+ *     bit 7: read sw4 (PP Man) state (1 = on, 0 = off) on PA3
+ *     bit 6: read sw3 (PP Mode) state (1 = manual, 0 = auto) on PA2
+ *     bit 5: read sw2 (CP Man) state (1 = on, 0 = off) on PA1
+ *     bit 4: read sw1 (CP Mode) state (1 = manual, 0 = auto) on PA0
  *     bit 3: reserved
  *     bit 2: reserved
  *     bit 1: read actual SSR2 state (1 = on, 0 = off)
@@ -90,6 +90,12 @@
  * To read the value of a register:
  *   - Send one byte (register address),
  *   - Receive read 1 byte
+ *
+ *
+ * ATtiny84 Configuration
+ * ======================
+ *
+ * Clock output on PORTB2 must be disabled (clear Low Fuse bit 6).
  */
 
 
@@ -105,15 +111,50 @@
 
 #define I2C_ADDRESS 0x44
 
-#define WRITE_LED PA0
-#define READ_LED  PA1
+#define LED_BANK  PORTB
+#define LED_PORT  PB1
 
 #define REGISTER_CONTROL 0x00
 #define REGISTER_STATUS  0x01
 #define NUM_REGISTERS    2
 
+// Control Register
+#define REGISTER_CONTROL_SSR1   (1 << 0)
+#define REGISTER_CONTROL_SSR2   (1 << 1)
+#define REGISTER_CONTROL_BUZZER (1 << 4)
+
+#define REGISTER_CONTROL_ON     1
+#define REGISTER_CONTROL_OFF    0
+
+// Status Register
+#define REGISTER_STATUS_SSR1    (1 << 0)
+#define REGISTER_STATUS_SSR2    (1 << 1)
+#define REGISTER_STATUS_SW1     (1 << 4)    // CP Mode
+#define REGISTER_STATUS_SW2     (1 << 5)    // CP Man
+#define REGISTER_STATUS_SW3     (1 << 6)    // PP Mode
+#define REGISTER_STATUS_SW4     (1 << 7)    // PP Man
+
+#define REGISTER_STATUS_CP_MODE REGISTER_STATUS_SW1
+#define REGISTER_STATUS_CP_MAN  REGISTER_STATUS_SW2
+#define REGISTER_STATUS_PP_MODE REGISTER_STATUS_SW3
+#define REGISTER_STATUS_PP_MAN  REGISTER_STATUS_SW4
+
+#define REGISTER_STATUS_MODE_AUTO   0
+#define REGISTER_STATUS_MODE_MANUAL 1
+#define REGISTER_STATUS_ON          1
+#define REGISTER_STATUS_OFF         0
+
 static uint8_t register_addr = 255;
-static uint8_t registers[NUM_REGISTERS] = { 0x80, 0x81 };
+static uint8_t registers[NUM_REGISTERS] = { 0x00, 0x00 };
+
+// SSR "actual" states
+static uint8_t ssr1 = 0;
+static uint8_t ssr2 = 0;
+
+#define SSR1_BANK PORTB
+#define SSR1_PORT PB0
+#define SSR2_BANK PORTB
+#define SSR2_PORT PB2
 
 static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buffer,
                           uint8_t *output_buffer_length, uint8_t *output_buffer);
@@ -142,7 +183,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
     switch (input_buffer_length)
     {
         case 0:  // read currently addressed register
-            blink_led(&PORTA, WRITE_LED, 1);
+            //blink_led(&LED_BANK, LED_PORT, 1);
             if (register_addr < NUM_REGISTERS)
             {
                 *output_buffer_length = 1;
@@ -151,7 +192,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
             break;
 
         case 1:  // write before read - set ADDR register only
-            blink_led(&PORTA, WRITE_LED, 2);
+            //blink_led(&LED_BANK, LED_PORT, 2);
             register_addr = input_buffer[0];
             if (register_addr < NUM_REGISTERS)
             {
@@ -161,7 +202,7 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
             break;
 
         case 2:  // write - set command register and addressed register
-            blink_led(&PORTA, WRITE_LED, 3);
+            //blink_led(&LED_BANK, LED_PORT, 3);
             register_addr = input_buffer[0];
             if (register_addr < NUM_REGISTERS)
             {
@@ -178,21 +219,107 @@ static void data_callback(uint8_t input_buffer_length, const uint8_t *input_buff
 
         default:
             // ignore
-            blink_led(&PORTA, WRITE_LED, 4);
+            //blink_led(&LED_BANK, LED_PORT, 4);
             break;
     }
 }
 
+static void read_switches(void)
+{
+
+}
+
+static void calculate_ssr_state(uint8_t * ssr, uint8_t mode)
+{
+
+}
+
+static void update_ssr_output(uint8_t * ssr, volatile uint8_t * port, uint8_t pin)
+{
+
+}
+
+static void update_status_register(uint8_t * ssr, uint8_t status)
+{
+
+}
+
 static void idle_callback(void)
 {
-    //blink_led(&PORTA, READ_LED, 1);
+    //blink_led(&LED_BANK, LED_PORT, 1);
+
+    // read switch states from first 4 bits of PINA
+    uint8_t switches = PINA & 0x0f;
+    registers[REGISTER_STATUS] = switches << 4;
+
+    // manual switches are inverted
+    registers[REGISTER_STATUS] ^= REGISTER_STATUS_CP_MAN;
+    registers[REGISTER_STATUS] ^= REGISTER_STATUS_PP_MAN;
+
+    // Calculate SSR actual states
+    if ((registers[REGISTER_STATUS] & REGISTER_STATUS_CP_MODE) == REGISTER_STATUS_MODE_AUTO)
+    {
+        // use the requested control value
+        ssr1 = (registers[REGISTER_CONTROL] & REGISTER_CONTROL_SSR1) ? 1 : 0;
+    }
+    else
+    {
+        // use the manual switch value
+        ssr1 = (registers[REGISTER_STATUS] & REGISTER_STATUS_CP_MAN) ? 1 : 0;
+    }
+
+    if ((registers[REGISTER_STATUS] & REGISTER_STATUS_PP_MODE) == REGISTER_STATUS_MODE_AUTO)
+    {
+        // use the requested control value
+        ssr2 = (registers[REGISTER_CONTROL] & REGISTER_CONTROL_SSR2) ? 1 : 0;
+    }
+    else
+    {
+        // use the manual switch value
+        ssr2 = (registers[REGISTER_STATUS] & REGISTER_STATUS_PP_MAN) ? 1 : 0;
+    }
+
+    // Update the actual status of the SSR and drive the output
+    if (ssr1)
+    {
+        registers[REGISTER_STATUS] |= REGISTER_STATUS_SSR1;
+
+        // drive low to turn SSR on
+        SSR1_BANK &= ~(1 << SSR1_PORT);
+    }
+    else
+    {
+        registers[REGISTER_STATUS] &= ~REGISTER_STATUS_SSR1;
+        SSR1_BANK |= 1 << SSR1_PORT;
+    }
+
+    if (ssr2)
+    {
+        registers[REGISTER_STATUS] |= REGISTER_STATUS_SSR2;
+
+        // drive low to turn SSR on
+        SSR2_BANK &= ~(1 << SSR2_PORT);
+    }
+    else
+    {
+        registers[REGISTER_STATUS] &= ~REGISTER_STATUS_SSR2;
+        SSR2_BANK |= 1 << SSR2_PORT;
+    }
 }
 
 int main(void)
 {
-    // initialize port A
-    DDRA = (1 << PA0) | (1 << PA1);
-    PORTA = 0b00000000;
+    // initialize PA0-3 as inputs, PA7 as output
+    DDRA = (0 << PA0) | (0 << PA1) | (0 << PA2) | (0 << PA3) | (1 << PA7);
+
+    // activate pullups on PA0-3
+    PORTA = (1 << PA0) | (1 << PA1) | (1 << PA2) | (1 << PA3);
+
+    // initialize PB0, PB1, PB2 as outputs
+    DDRB = (1 << PB0) | (1 << PB1) | (1 << PB2);
+
+    // initialise PB0 and PB2 high
+    PORTB = (1 << PB0) | (0 << PB1) | (1 << PB2);
 
     // start the slave loop
     usi_twi_slave(I2C_ADDRESS, false /*use_sleep*/, data_callback, idle_callback);
